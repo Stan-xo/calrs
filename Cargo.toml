@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/calrs-core",
+    "crates/calrs-cli",
+]
+resolver = "2"
