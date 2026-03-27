@@ -1,7 +1,7 @@
 //! Event model: a time-bound calendar entry, optionally recurring.
 
-use chrono::{DateTime, Utc};
 use super::recurrence::Recurrence;
+use chrono::{DateTime, Utc};
 
 /// Progression state of a calendar event.
 pub enum EventState {

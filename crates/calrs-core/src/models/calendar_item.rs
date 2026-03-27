@@ -1,9 +1,9 @@
 //! CalendarItem: top-level type representing any entry in the calendar.
 
-use chrono::{DateTime, Utc};
 use super::event::Event;
-use super::task::Task;
 use super::reminder::Reminder;
+use super::task::Task;
+use chrono::{DateTime, Utc};
 
 /// Global visibility and lifecycle status of a calendar item.
 pub enum GlobalStatus {
