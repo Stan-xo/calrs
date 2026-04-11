@@ -1,3 +1,4 @@
 //! Storage layer: persistence for calendar items.
 
-mod sqlite;
+pub mod sqlite;
+pub mod crud;

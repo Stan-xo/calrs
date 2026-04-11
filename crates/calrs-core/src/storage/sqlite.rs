@@ -105,6 +105,7 @@ pub async fn init_database(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         date_end    DATETIME NOT NULL,
         full_day    BOOLEAN NOT NULL,
         state       TEXT NOT NULL,
+        parent_id   INTEGER,
         FOREIGN KEY (item_id) REFERENCES calendar_items(id)
         )",
     )
