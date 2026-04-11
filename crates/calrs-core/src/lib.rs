@@ -4,3 +4,5 @@ pub mod models;
 pub mod storage;
 
 pub const APP_NAME: &str = "calrs";
+pub const DEFAULT_TIMEZONE: &str = "UTC"; // TODO : prendre fuseau horraire de l'appareil (PC, ou tel ...)
+

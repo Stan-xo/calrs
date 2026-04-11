@@ -5,6 +5,6 @@ edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono"] }
 dirs = "6"
 tokio = { version = "1", features = ["full"] }
