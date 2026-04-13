@@ -1,8 +1,8 @@
 //! Integration tests for CRUD storage operations.
 
 use calrs_core::models::calendar_item::CalendarItem;
-use calrs_core::storage::sqlite::{open_database, init_database};
 use calrs_core::storage::crud::insert_item;
+use calrs_core::storage::sqlite::{init_database, open_database};
 use chrono::Utc;
 
 async fn setup_db() -> sqlx::SqlitePool {

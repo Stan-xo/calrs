@@ -1,10 +1,12 @@
 //! CalendarItem: top-level type representing any entry in the calendar.
 
-use super::event::{Event, EventState,};
-use super::reminder::Reminder;
+use super::calendar_item_row::{CalendarItemRow, EventRow, TaskRow};
+use super::event::{Event, EventState};
 use super::recurrence::Recurrence;
-use super::task::{Task, TaskState, Criticality};
+use super::reminder::Reminder;
+use super::task::{Criticality, Task, TaskState};
 use chrono::{DateTime, Utc};
+use std::convert::TryFrom;
 
 use crate::DEFAULT_TIMEZONE;
 
@@ -59,8 +61,8 @@ impl CalendarItem {
         full_day: bool,
     ) -> Self {
         CalendarItem {
-            id: 0,          // assigned by SQLite on insert
-            title,          // == title: title
+            id: 0, // assigned by SQLite on insert
+            title, // == title: title
             timezone: DEFAULT_TIMEZONE.to_string(),
             status: GlobalStatus::Active,
             kind: ItemKind::Event(Event {
@@ -83,10 +85,10 @@ impl CalendarItem {
     }
 
     /// Constructor for Task
-    pub fn new_task(title: String) -> Self{
+    pub fn new_task(title: String) -> Self {
         CalendarItem {
-            id: 0,          // assigned by SQLite on insert
-            title,          // == title: title
+            id: 0, // assigned by SQLite on insert
+            title, // == title: title
             timezone: DEFAULT_TIMEZONE.to_string(),
             status: GlobalStatus::Active,
             kind: ItemKind::Task(Task {
@@ -105,35 +107,35 @@ impl CalendarItem {
     }
 
     /// Common builder
-    pub fn with_timezone(mut self, timezone:String) -> Self{
+    pub fn with_timezone(mut self, timezone: String) -> Self {
         self.timezone = timezone;
         self
     }
-    pub fn with_status(mut self, status: GlobalStatus) -> Self{
+    pub fn with_status(mut self, status: GlobalStatus) -> Self {
         self.status = status;
         self
     }
-    pub fn with_description(mut self, description: String) -> Self{
+    pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
         self
     }
-    pub fn with_place(mut self, place: String) -> Self{
+    pub fn with_place(mut self, place: String) -> Self {
         self.place = Some(place);
         self
     }
-    pub fn with_links(mut self, links: Vec<String>) -> Self{
+    pub fn with_links(mut self, links: Vec<String>) -> Self {
         self.links = Some(links);
         self
     }
-    pub fn with_reminders(mut self, reminders: Vec<Reminder>) -> Self{
+    pub fn with_reminders(mut self, reminders: Vec<Reminder>) -> Self {
         self.reminders = Some(reminders);
         self
     }
-    pub fn with_icon(mut self, icon: String) -> Self{
+    pub fn with_icon(mut self, icon: String) -> Self {
         self.icon = Some(icon);
         self
     }
-    pub fn with_color(mut self, color: (u8, u8, u8, u8)) -> Self{
+    pub fn with_color(mut self, color: (u8, u8, u8, u8)) -> Self {
         self.color = Some(color);
         self
     }
@@ -181,5 +183,103 @@ impl CalendarItem {
     // Common setteur
     pub fn set_id(&mut self, id: u64) {
         self.id = id;
+    }
+}
+
+impl TryFrom<(CalendarItemRow, Option<EventRow>, Option<TaskRow>)> for CalendarItem {
+    type Error = String;
+
+    fn try_from(
+        (row, event_row, task_row): (CalendarItemRow, Option<EventRow>, Option<TaskRow>),
+    ) -> Result<Self, Self::Error> {
+        // convert status
+        let status = match row.status.as_str() {
+            "active" => GlobalStatus::Active,
+            "cancelled" => GlobalStatus::Cancelled,
+            "draft" => GlobalStatus::Draft,
+            other => return Err(format!("Unknown status: {}", other)),
+        };
+
+        // convert color
+        let color = match (row.color_r, row.color_g, row.color_b, row.color_a) {
+            (Some(r), Some(g), Some(b), Some(a)) => Some((r as u8, g as u8, b as u8, a as u8)),
+            _ => None,
+        };
+
+        // convert deleted_at
+        let deleted_at = match row.deleted_at {
+            Some(s) => Some(
+                DateTime::parse_from_rfc3339(&s)
+                    .map_err(|e| format!("Invalid deleted_at date: {}", e))?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+
+        // convert kind
+        let kind = match row.kind.as_str() {
+            "event" => {
+                let e = event_row.ok_or("Missing event row for kind=event")?;
+
+                let state = match e.state.as_str() {
+                    "planned" => EventState::Planned,
+                    "confirmed" => EventState::Confirmed,
+                    "finished" => EventState::Finished,
+                    other => return Err(format!("Unknown event state: {}", other)),
+                };
+
+                ItemKind::Event(Event {
+                    date_start: e.date_start,
+                    date_end: e.date_end,
+                    full_day: e.full_day,
+                    state,
+                    recurrence: None, // chargé séparément si besoin
+                    exceptions: None, // chargé séparément si besoin
+                    parent_id: e.parent_id.map(|id| id as u64),
+                })
+            }
+            "task" => {
+                let t = task_row.ok_or("Missing task row for kind=task")?;
+
+                let state = match t.state.as_str() {
+                    "todo" => TaskState::Todo,
+                    "doing" => TaskState::Doing,
+                    "done" => TaskState::Done,
+                    other => return Err(format!("Unknown task state: {}", other)),
+                };
+
+                let criticality = match t.criticality.as_deref() {
+                    Some("low") => Some(Criticality::Low),
+                    Some("medium") => Some(Criticality::Medium),
+                    Some("high") => Some(Criticality::High),
+                    Some("urgent") => Some(Criticality::Urgent),
+                    Some("blocked") => Some(Criticality::Blocked),
+                    None => None,
+                    Some(other) => return Err(format!("Unknown criticality: {}", other)),
+                };
+
+                ItemKind::Task(Task {
+                    deadline: t.deadline,
+                    state,
+                    criticality,
+                })
+            }
+            other => return Err(format!("Unknown kind: {}", other)),
+        };
+
+        Ok(CalendarItem {
+            id: row.id as u64,
+            title: row.title,
+            timezone: row.timezone,
+            status,
+            kind,
+            description: row.description,
+            place: row.place,
+            links: None,     // chargé séparément
+            reminders: None, // chargé séparément
+            icon: row.icon,
+            color,
+            deleted_at,
+        })
     }
 }
