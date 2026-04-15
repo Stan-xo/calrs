@@ -7,8 +7,8 @@
 //! - [`insert_item`] : inserts a new item and assigns its generated id
 //! - [`get_item`] :
 //! - [`list_items`] :
-//! - [`update_items`] :
 //! - [`delete_item`] :
+//! - [`update_items`] :
 
 use crate::models::calendar_item::{CalendarItem, GlobalStatus, ItemKind};
 use crate::models::calendar_item_row::{CalendarItemRow, EventRow, LinkRow, ReminderRow, TaskRow};
@@ -16,6 +16,7 @@ use crate::models::event::EventState;
 use crate::models::recurrence::{RecurrenceEnd, RecurrenceFrequency};
 use crate::models::reminder::{Reminder, ReminderDelay};
 use crate::models::task::{Criticality, TaskState};
+use chrono::Utc;
 use sqlx::SqlitePool;
 
 /// Inserts a new calendar item into the database.
@@ -230,24 +231,52 @@ pub async fn get_item(pool: &SqlitePool, id: u64) -> Result<Option<CalendarItem>
         Some(r) => r,
     };
 
+    Ok(Some(build_item(pool, row).await?))
+}
+
+/// Soft-deletes a calendar item by setting its `deleted_at` timestamp.
+///
+/// The item is never physically removed from the database,
+/// preserving history and enabling sync reconciliation.
+pub async fn delete_item(pool: &SqlitePool, id: u64) -> Result<(), sqlx::Error> {
+    let utc_now = Utc::now();
+
+    sqlx::query("UPDATE calendar_items SET deleted_at = ? WHERE id = ?")
+        .bind(utc_now)
+        .bind(id as i64)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+/// Fetches all active calendar items.
+///
+/// Deleted items (where `deleted_at` is set) are excluded.
+pub async fn list_items(pool: &SqlitePool) -> Result<Vec<CalendarItem>, sqlx::Error> {
+    let mut items: Vec<CalendarItem> = Vec::new();
+
+    let rows = sqlx::query_as::<_, CalendarItemRow>(
+        "SELECT * FROM calendar_items WHERE deleted_at IS NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // .map interdit sur les fonctions async
+    for row in rows {
+        let item = build_item(pool, row).await?;
+        items.push(item)
+    }
+
+    Ok(items)
+}
+
+// Builds a complete CalendarItem from a row, fetching kind, reminders and links.
+async fn build_item(pool: &SqlitePool, row: CalendarItemRow) -> Result<CalendarItem, sqlx::Error> {
+    let id = row.id as u64;
+
     // fetch event or task row selon kind
-    let (event_row, task_row) = match row.kind.as_str() {
-        "event" => {
-            let event_row = sqlx::query_as::<_, EventRow>("SELECT * FROM events WHERE item_id = ?")
-                .bind(id as i64)
-                .fetch_optional(pool)
-                .await?;
-            (event_row, None)
-        }
-        "task" => {
-            let task_row = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE item_id = ?")
-                .bind(id as i64)
-                .fetch_optional(pool)
-                .await?;
-            (None, task_row)
-        }
-        _ => return Ok(None),
-    };
+    let (event_row, task_row) = fetch_kind(pool, id, row.kind.as_str()).await?;
 
     // reconstruction
     let mut item = CalendarItem::try_from((row, event_row, task_row))
@@ -258,10 +287,48 @@ pub async fn get_item(pool: &SqlitePool, id: u64) -> Result<Option<CalendarItem>
     //     .map_err(|e: String| sqlx::Error::Decode(e.into()))?;
 
     // fetch reminders
-    let reminders = sqlx::query_as::<_, ReminderRow>("SELECT * FROM reminders WHERE item_id = ?")
+    item.reminders = fetch_reminders(pool, id).await?;
+
+    // fetch links
+    item.links = fetch_links(pool, id).await?;
+
+    Ok(item)
+}
+
+async fn fetch_kind(
+    pool: &SqlitePool,
+    id: u64,
+    kind: &str,
+) -> Result<(Option<EventRow>, Option<TaskRow>), sqlx::Error> {
+    // fetch event or task row selon kind
+    match kind {
+        "event" => {
+            let event_row = sqlx::query_as::<_, EventRow>("SELECT * FROM events WHERE item_id = ?")
+                .bind(id as i64)
+                .fetch_optional(pool)
+                .await?;
+            Ok((event_row, None))
+        }
+        "task" => {
+            let task_row = sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE item_id = ?")
+                .bind(id as i64)
+                .fetch_optional(pool)
+                .await?;
+            Ok((None, task_row))
+        }
+        _ => Ok((None, None)),
+    }
+}
+
+async fn fetch_reminders(pool: &SqlitePool, id: u64) -> Result<Option<Vec<Reminder>>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ReminderRow>("SELECT * FROM reminders WHERE item_id = ?")
         .bind(id as i64)
-        .fetch_all(pool) // All item not only one
+        .fetch_all(pool)
         .await?;
+
+    if rows.is_empty() {
+        return Ok(None);
+    }
 
     // attach to item if any
     // reminders.into_iter() : consumes the Vec and creates an iterator over ReminderRow
@@ -275,56 +342,54 @@ pub async fn get_item(pool: &SqlitePool, id: u64) -> Result<Option<CalendarItem>
     // iter()      — emprunte les éléments (&ReminderRow), le Vec original reste utilisable
     // into_iter() — consomme les éléments (ReminderRow), le Vec original est détruit
     //               on utilise into_iter() quand on n'a plus besoin du Vec source
-    if !reminders.is_empty() {
-        let reminders: Result<Vec<Reminder>, sqlx::Error> = reminders
-            .into_iter()
-            .map(|r| -> Result<Reminder, sqlx::Error> {
-                let delay = match r.delay.as_str() {
-                    "Minutes5" => ReminderDelay::Minutes5,
-                    "Minutes10" => ReminderDelay::Minutes10,
-                    "Minutes15" => ReminderDelay::Minutes15,
-                    "Minutes30" => ReminderDelay::Minutes30,
-                    "Hour1" => ReminderDelay::Hour1,
-                    "Hour2" => ReminderDelay::Hour2,
-                    "Hour6" => ReminderDelay::Hour6,
-                    "Hour12" => ReminderDelay::Hour12,
-                    "Day1" => ReminderDelay::Day1,
-                    "Day2" => ReminderDelay::Day2,
-                    "Day3" => ReminderDelay::Day3,
-                    "Week1" => ReminderDelay::Week1,
-                    "Week2" => ReminderDelay::Week2,
-                    "Week3" => ReminderDelay::Week3,
-                    "Month1" => ReminderDelay::Month1,
-                    "Year1" => ReminderDelay::Year1,
-                    other => {
-                        return Err(sqlx::Error::Decode(
-                            format!("Unknown reminder delay: {}", other).into(),
-                        ));
-                    }
-                };
-                Ok(Reminder {
-                    active: r.active,
-                    delay,
-                })
+
+    let reminders: Result<Vec<Reminder>, sqlx::Error> = rows
+        .into_iter()
+        .map(|r| -> Result<Reminder, sqlx::Error> {
+            let delay = match r.delay.as_str() {
+                "Minutes5" => ReminderDelay::Minutes5,
+                "Minutes10" => ReminderDelay::Minutes10,
+                "Minutes15" => ReminderDelay::Minutes15,
+                "Minutes30" => ReminderDelay::Minutes30,
+                "Hour1" => ReminderDelay::Hour1,
+                "Hour2" => ReminderDelay::Hour2,
+                "Hour6" => ReminderDelay::Hour6,
+                "Hour12" => ReminderDelay::Hour12,
+                "Day1" => ReminderDelay::Hour12,
+                "Day2" => ReminderDelay::Hour12,
+                "Day3" => ReminderDelay::Hour12,
+                "Week1" => ReminderDelay::Hour12,
+                "Week2" => ReminderDelay::Hour12,
+                "Week3" => ReminderDelay::Hour12,
+                "Month1" => ReminderDelay::Hour12,
+                "Year1" => ReminderDelay::Year1,
+                other => {
+                    return Err(sqlx::Error::Decode(
+                        format!("Unknown reminder delay: {}", other).into(),
+                    ));
+                }
+            };
+            Ok(Reminder {
+                active: r.active,
+                delay,
             })
-            .collect();
+        })
+        .collect();
 
-        let reminders = reminders?;
-        item.reminders = Some(reminders);
-    }
+    Ok(Some(reminders?))
+}
 
-    // fetch links
-    let links = sqlx::query_as::<_, LinkRow>("SELECT * FROM links WHERE item_id = ?")
+async fn fetch_links(pool: &SqlitePool, id: u64) -> Result<Option<Vec<String>>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, LinkRow>("SELECT * FROM links WHERE item_id = ?")
         .bind(id as i64)
         .fetch_all(pool)
         .await?;
 
-    // attach to item if any
-    if !links.is_empty() {
-        item.links = Some(links.into_iter().map(|l| l.url).collect());
+    if rows.is_empty() {
+        return Ok(None);
     }
 
-    Ok(Some(item))
+    Ok(Some(rows.into_iter().map(|l| l.url).collect()))
 }
 
 #[cfg(test)]
