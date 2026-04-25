@@ -5,15 +5,15 @@
 //!
 //! # Operations
 //! - [`insert_item`] : inserts a new item and assigns its generated id
-//! - [`get_item`] :
-//! - [`list_items`] :
-//! - [`delete_item`] :
-//! - [`update_items`] :
+//! - [`get_item`] : get an item
+//! - [`list_items`] : list items
+//! - [`delete_item`] : delete an item
+//! - [`update_item`] : update an item
 
 use crate::models::calendar_item::{CalendarItem, GlobalStatus, ItemKind};
 use crate::models::calendar_item_row::{CalendarItemRow, EventRow, LinkRow, ReminderRow, TaskRow};
 use crate::models::event::EventState;
-use crate::models::recurrence::{RecurrenceEnd, RecurrenceFrequency};
+use crate::models::recurrence::{Recurrence, RecurrenceEnd, RecurrenceFrequency};
 use crate::models::reminder::{Reminder, ReminderDelay};
 use crate::models::task::{Criticality, TaskState};
 use chrono::Utc;
@@ -28,19 +28,10 @@ pub async fn insert_item(pool: &SqlitePool, item: &mut CalendarItem) -> Result<(
     let mut tx = pool.begin().await?;
 
     // convert enums to strings for SQLite
-    let kind = match &item.kind {
-        ItemKind::Event(_) => "event",
-        ItemKind::Task(_) => "task",
-    };
-    let status = match &item.status {
-        GlobalStatus::Active => "active",
-        GlobalStatus::Cancelled => "cancelled",
-        GlobalStatus::Draft => "draft",
-    };
-    let (color_r, color_g, color_b, color_a) = match item.color {
-        Some((r, g, b, a)) => (Some(r), Some(g), Some(b), Some(a)),
-        None => (None, None, None, None),
-    };
+    let kind = kind_to_string(&item.kind);
+    let status = status_to_string(&item.status);
+
+    let (color_r, color_g, color_b, color_a) = color_to_u8_colors(item.color);
 
     // INSERT calendar_items
     // (? : pour des parametres bindés (.bind()), plus sur et evite les injection de SQL)
@@ -71,11 +62,7 @@ pub async fn insert_item(pool: &SqlitePool, item: &mut CalendarItem) -> Result<(
     match &item.kind {
         ItemKind::Event(event) => {
             // convert state to string
-            let state = match event.state {
-                EventState::Planned => "planned",
-                EventState::Confirmed => "confirmed",
-                EventState::Finished => "finished",
-            };
+            let state = state_event_to_string(&event.state);
 
             sqlx::query(
                 "INSERT INTO events (item_id, date_start, date_end, full_day, state, parent_id)
@@ -92,63 +79,19 @@ pub async fn insert_item(pool: &SqlitePool, item: &mut CalendarItem) -> Result<(
 
             // INSERT recurrence if present
             if let Some(recurrence) = &event.recurrence {
-                let frequency = match recurrence.frequency {
-                    RecurrenceFrequency::Daily => "daily",
-                    RecurrenceFrequency::Weekly => "weekly",
-                    RecurrenceFrequency::Monthly => "monthly",
-                    RecurrenceFrequency::Yearly => "yearly",
-                };
-                let (end_kind, end_value) = match &recurrence.end {
-                    RecurrenceEnd::Never => ("never", None),
-                    RecurrenceEnd::AfterOccurrences(n) => {
-                        ("after_occurrences", Some(n.to_string()))
-                    }
-                    RecurrenceEnd::UntilDate(date) => ("until_date", Some(date.to_rfc3339())),
-                };
-
-                sqlx::query(
-                    "INSERT INTO recurrences (item_id, frequency, interval, end_kind, end_value)
-                    VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(item.id as i64)
-                .bind(frequency)
-                .bind(recurrence.interval as i64)
-                .bind(end_kind)
-                .bind(end_value)
-                .execute(&mut *tx)
-                .await?;
+                insert_recurrence(&mut tx, item.id, recurrence).await?;
 
                 // INSERT exceptions if present
                 if let Some(exceptions) = &event.exceptions {
-                    for exception in exceptions {
-                        sqlx::query(
-                            "INSERT INTO recurrence_exceptions (item_id, exception_date)
-                            VALUES (?, ?)",
-                        )
-                        .bind(item.id as i64)
-                        .bind(exception)
-                        .execute(&mut *tx)
-                        .await?;
-                    }
+                    insert_exceptions(&mut tx, item.id, exceptions).await?;
                 }
             }
         }
         ItemKind::Task(task) => {
             // convert state to string
-            let state = match task.state {
-                TaskState::Todo => "Todo",
-                TaskState::Doing => "Doing",
-                TaskState::Done => "Done",
-            };
+            let state = state_task_to_string(&task.state);
             // convert state to string
-            let criticality = match task.criticality {
-                Some(Criticality::Low) => Some("low"),
-                Some(Criticality::Medium) => Some("medium"),
-                Some(Criticality::High) => Some("high"),
-                Some(Criticality::Urgent) => Some("urgent"),
-                Some(Criticality::Blocked) => Some("blocked"),
-                None => None,
-            };
+            let criticality = criticality_to_sting(&task.criticality);
 
             sqlx::query(
                 "INSERT INTO tasks (item_id, deadline, state, criticality)
@@ -165,49 +108,125 @@ pub async fn insert_item(pool: &SqlitePool, item: &mut CalendarItem) -> Result<(
 
     // INSERT reminders if present
     if let Some(reminders) = &item.reminders {
-        for reminder in reminders {
-            let delay = match reminder.delay {
-                ReminderDelay::Minutes5 => "Minutes5",
-                ReminderDelay::Minutes10 => "Minutes10",
-                ReminderDelay::Minutes15 => "Minutes15",
-                ReminderDelay::Minutes30 => "Minutes30",
-                ReminderDelay::Hour1 => "Hour1",
-                ReminderDelay::Hour2 => "Hour2",
-                ReminderDelay::Hour6 => "Hour6",
-                ReminderDelay::Hour12 => "Hour12",
-                ReminderDelay::Day1 => "Day1",
-                ReminderDelay::Day2 => "Day2",
-                ReminderDelay::Day3 => "Day3",
-                ReminderDelay::Week1 => "Week1",
-                ReminderDelay::Week2 => "Week2",
-                ReminderDelay::Week3 => "Week3",
-                ReminderDelay::Month1 => "Month1",
-                ReminderDelay::Year1 => "Year1",
-            };
+        insert_reminders(&mut tx, item.id, reminders).await?;
+    }
+
+    if let Some(links) = &item.links {
+        insert_links(&mut tx, item.id, links).await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Updates an existing calendar item in the database.
+///
+/// All tables are updated within a single transaction.
+/// If any step fails, the transaction is rolled back.
+pub async fn update_item(pool: &SqlitePool, item: &CalendarItem) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    let kind = kind_to_string(&item.kind);
+    let status = status_to_string(&item.status);
+    let (color_r, color_g, color_b, color_a) = color_to_u8_colors(item.color);
+
+    // UPDATE calendar_items
+    sqlx::query(
+        "UPDATE calendar_items SET
+            kind = ?, title = ?, timezone = ?, status = ?,
+            description = ?, place = ?, icon = ?,
+            color_r = ?, color_g = ?, color_b = ?, color_a = ?,
+            deleted_at = ?
+         WHERE id = ?",
+    )
+    .bind(kind)
+    .bind(&item.title)
+    .bind(&item.timezone)
+    .bind(status)
+    .bind(&item.description)
+    .bind(&item.place)
+    .bind(&item.icon)
+    .bind(color_r.map(|v| v as i64))
+    .bind(color_g.map(|v| v as i64))
+    .bind(color_b.map(|v| v as i64))
+    .bind(color_a.map(|v| v as i64))
+    .bind(&item.deleted_at)
+    .bind(item.id as i64)
+    .execute(&mut *tx)
+    .await?;
+
+    // UPDATE events or tasks
+    match &item.kind {
+        ItemKind::Event(event) => {
+            // UPDATE events
+            let state = state_event_to_string(&event.state);
             sqlx::query(
-                "INSERT INTO reminders (item_id, active, delay)
-                 VALUES (?, ?, ?)",
+                "UPDATE events SET
+                    date_start = ?, date_end = ?, full_day = ?, state = ?, parent_id = ?
+                    WHERE item_id = ?",
             )
+            .bind(&event.date_start)
+            .bind(&event.date_end)
+            .bind(event.full_day)
+            .bind(state)
+            .bind(event.parent_id.map(|id| id as i64))
             .bind(item.id as i64)
-            .bind(reminder.active)
-            .bind(delay)
+            .execute(&mut *tx)
+            .await?;
+
+            // DELETE recurrence and exceptions
+            sqlx::query("DELETE FROM recurrences WHERE item_id = ?")
+                .bind(item.id as i64)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM recurrence_exceptions WHERE item_id = ?")
+                .bind(item.id as i64)
+                .execute(&mut *tx)
+                .await?;
+
+            // INSERT recurrence and exceptions
+            if let Some(recurrence) = &event.recurrence {
+                insert_recurrence(&mut tx, item.id, recurrence).await?;
+            }
+            if let Some(exceptions) = &event.exceptions {
+                insert_exceptions(&mut tx, item.id, exceptions).await?;
+            }
+        }
+        ItemKind::Task(task) => {
+            // UPDATE tasks
+            //     "INSERT INTO tasks (item_id, deadline, state, criticality)
+            //  VALUES (?, ?, ?, ?)",
+            let state = state_task_to_string(&task.state);
+            let criticality = criticality_to_sting(&task.criticality);
+            sqlx::query(
+                "UPDATE tasks SET
+                    deadline = ?, state = ?, criticality = ?
+                    WHERE item_id = ?",
+            )
+            .bind(&task.deadline)
+            .bind(state)
+            .bind(criticality)
+            .bind(item.id as i64)
             .execute(&mut *tx)
             .await?;
         }
     }
 
-    // INSERT links if present
+    // DELETE + INSERT for reminders and links
+    sqlx::query("DELETE FROM reminders WHERE item_id = ?")
+        .bind(item.id as i64)
+        .execute(&mut *tx)
+        .await?;
+    if let Some(reminders) = &item.reminders {
+        insert_reminders(&mut tx, item.id, reminders).await?;
+    }
+
+    sqlx::query("DELETE FROM links WHERE item_id = ?")
+        .bind(item.id as i64)
+        .execute(&mut *tx)
+        .await?;
     if let Some(links) = &item.links {
-        for link in links {
-            sqlx::query(
-                "INSERT INTO links (item_id, url)
-                 VALUES (?, ?)",
-            )
-            .bind(item.id as i64)
-            .bind(link)
-            .execute(&mut *tx)
-            .await?;
-        }
+        insert_links(&mut tx, item.id, links).await?;
     }
 
     tx.commit().await?;
@@ -295,6 +314,7 @@ async fn build_item(pool: &SqlitePool, row: CalendarItemRow) -> Result<CalendarI
     Ok(item)
 }
 
+// fetchers
 async fn fetch_kind(
     pool: &SqlitePool,
     id: u64,
@@ -390,6 +410,167 @@ async fn fetch_links(pool: &SqlitePool, id: u64) -> Result<Option<Vec<String>>, 
     }
 
     Ok(Some(rows.into_iter().map(|l| l.url).collect()))
+}
+
+// Conv enum and other
+fn kind_to_string(kind: &ItemKind) -> &'static str {
+    match kind {
+        ItemKind::Event(_) => "event",
+        ItemKind::Task(_) => "task",
+    }
+}
+
+fn status_to_string(status: &GlobalStatus) -> &'static str {
+    match status {
+        GlobalStatus::Active => "active",
+        GlobalStatus::Cancelled => "cancelled",
+        GlobalStatus::Draft => "draft",
+    }
+}
+
+fn color_to_u8_colors(
+    color: Option<(u8, u8, u8, u8)>,
+) -> (Option<u8>, Option<u8>, Option<u8>, Option<u8>) {
+    match color {
+        Some((r, g, b, a)) => (Some(r), Some(g), Some(b), Some(a)),
+        None => (None, None, None, None),
+    }
+}
+
+fn state_event_to_string(state: &EventState) -> &'static str {
+    match state {
+        EventState::Planned => "planned",
+        EventState::Confirmed => "confirmed",
+        EventState::Finished => "finished",
+    }
+}
+
+fn state_task_to_string(state: &TaskState) -> &'static str {
+    match state {
+        TaskState::Todo => "Todo",
+        TaskState::Doing => "Doing",
+        TaskState::Done => "Done",
+    }
+}
+
+fn rec_frequency_to_sting(frequency: &RecurrenceFrequency) -> &'static str {
+    match frequency {
+        RecurrenceFrequency::Daily => "daily",
+        RecurrenceFrequency::Weekly => "weekly",
+        RecurrenceFrequency::Monthly => "monthly",
+        RecurrenceFrequency::Yearly => "yearly",
+    }
+}
+
+fn rec_end_to_sting(end: &RecurrenceEnd) -> (&'static str, Option<String>) {
+    match end {
+        RecurrenceEnd::Never => ("never", None),
+        RecurrenceEnd::AfterOccurrences(n) => ("after_occurrences", Some(n.to_string())),
+        RecurrenceEnd::UntilDate(date) => ("until_date", Some(date.to_rfc3339())),
+    }
+}
+
+fn criticality_to_sting(criticality: &Option<Criticality>) -> Option<&'static str> {
+    match criticality {
+        Some(Criticality::Low) => Some("low"),
+        Some(Criticality::Medium) => Some("medium"),
+        Some(Criticality::High) => Some("high"),
+        Some(Criticality::Urgent) => Some("urgent"),
+        Some(Criticality::Blocked) => Some("blocked"),
+        None => None,
+    }
+}
+
+fn rem_delay_to_string(delay: &ReminderDelay) -> &'static str {
+    match delay {
+        ReminderDelay::Minutes5 => "Minutes5",
+        ReminderDelay::Minutes10 => "Minutes10",
+        ReminderDelay::Minutes15 => "Minutes15",
+        ReminderDelay::Minutes30 => "Minutes30",
+        ReminderDelay::Hour1 => "Hour1",
+        ReminderDelay::Hour2 => "Hour2",
+        ReminderDelay::Hour6 => "Hour6",
+        ReminderDelay::Hour12 => "Hour12",
+        ReminderDelay::Day1 => "Day1",
+        ReminderDelay::Day2 => "Day2",
+        ReminderDelay::Day3 => "Day3",
+        ReminderDelay::Week1 => "Week1",
+        ReminderDelay::Week2 => "Week2",
+        ReminderDelay::Week3 => "Week3",
+        ReminderDelay::Month1 => "Month1",
+        ReminderDelay::Year1 => "Year1",
+    }
+}
+
+// insert
+async fn insert_reminders(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    item_id: u64,
+    reminders: &[Reminder],
+) -> Result<(), sqlx::Error> {
+    for reminder in reminders {
+        let delay = rem_delay_to_string(&reminder.delay);
+        sqlx::query("INSERT INTO reminders (item_id, active, delay) VALUES (?, ?, ?)")
+            .bind(item_id as i64)
+            .bind(reminder.active)
+            .bind(delay)
+            .execute(&mut **tx) // double déréf nécessaire ici
+            .await?;
+    }
+    Ok(())
+}
+
+async fn insert_links(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    item_id: u64,
+    links: &[String],
+) -> Result<(), sqlx::Error> {
+    for link in links {
+        sqlx::query("INSERT INTO links (item_id, url) VALUES (?, ?)")
+            .bind(item_id as i64)
+            .bind(link)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn insert_recurrence(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    item_id: u64,
+    recurrence: &Recurrence,
+) -> Result<(), sqlx::Error> {
+    let frequency = rec_frequency_to_sting(&recurrence.frequency);
+    let (end_kind, end_value) = rec_end_to_sting(&recurrence.end);
+
+    sqlx::query(
+        "INSERT INTO recurrences (item_id, frequency, interval, end_kind, end_value)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(item_id as i64)
+    .bind(frequency)
+    .bind(recurrence.interval as i64)
+    .bind(end_kind)
+    .bind(end_value)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+async fn insert_exceptions(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    item_id: u64,
+    exceptions: &[chrono::DateTime<chrono::Utc>],
+) -> Result<(), sqlx::Error> {
+    for exception in exceptions {
+        sqlx::query("INSERT INTO recurrence_exceptions (item_id, exception_date) VALUES (?, ?)")
+            .bind(item_id as i64)
+            .bind(exception)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
