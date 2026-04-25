@@ -447,9 +447,9 @@ fn state_event_to_string(state: &EventState) -> &'static str {
 
 fn state_task_to_string(state: &TaskState) -> &'static str {
     match state {
-        TaskState::Todo => "Todo",
-        TaskState::Doing => "Doing",
-        TaskState::Done => "Done",
+        TaskState::Todo => "todo",
+        TaskState::Doing => "doing",
+        TaskState::Done => "done",
     }
 }
 
