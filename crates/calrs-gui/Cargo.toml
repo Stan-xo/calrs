@@ -1,0 +1,7 @@
+[package]
+name = "calrs-gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+calrs-core = { path = "../../crates/calrs-core" }

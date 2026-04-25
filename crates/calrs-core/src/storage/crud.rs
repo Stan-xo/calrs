@@ -51,7 +51,7 @@ pub async fn insert_item(pool: &SqlitePool, item: &mut CalendarItem) -> Result<(
     .bind(color_g.map(|v| v as i64))
     .bind(color_b.map(|v| v as i64))
     .bind(color_a.map(|v| v as i64))
-    .bind(&item.deleted_at)
+    .bind(item.deleted_at)
     .execute(&mut *tx)
     .await?;
 
@@ -69,8 +69,8 @@ pub async fn insert_item(pool: &SqlitePool, item: &mut CalendarItem) -> Result<(
                  VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(item.id as i64)
-            .bind(&event.date_start)
-            .bind(&event.date_end)
+            .bind(event.date_start)
+            .bind(event.date_end)
             .bind(event.full_day)
             .bind(state)
             .bind(event.parent_id.map(|id| id as i64))
@@ -98,7 +98,7 @@ pub async fn insert_item(pool: &SqlitePool, item: &mut CalendarItem) -> Result<(
                  VALUES (?, ?, ?, ?)",
             )
             .bind(item.id as i64)
-            .bind(&task.deadline)
+            .bind(task.deadline)
             .bind(state)
             .bind(criticality)
             .execute(&mut *tx)
@@ -150,7 +150,7 @@ pub async fn update_item(pool: &SqlitePool, item: &CalendarItem) -> Result<(), s
     .bind(color_g.map(|v| v as i64))
     .bind(color_b.map(|v| v as i64))
     .bind(color_a.map(|v| v as i64))
-    .bind(&item.deleted_at)
+    .bind(item.deleted_at)
     .bind(item.id as i64)
     .execute(&mut *tx)
     .await?;
@@ -165,8 +165,8 @@ pub async fn update_item(pool: &SqlitePool, item: &CalendarItem) -> Result<(), s
                     date_start = ?, date_end = ?, full_day = ?, state = ?, parent_id = ?
                     WHERE item_id = ?",
             )
-            .bind(&event.date_start)
-            .bind(&event.date_end)
+            .bind(event.date_start)
+            .bind(event.date_end)
             .bind(event.full_day)
             .bind(state)
             .bind(event.parent_id.map(|id| id as i64))
@@ -203,7 +203,7 @@ pub async fn update_item(pool: &SqlitePool, item: &CalendarItem) -> Result<(), s
                     deadline = ?, state = ?, criticality = ?
                     WHERE item_id = ?",
             )
-            .bind(&task.deadline)
+            .bind(task.deadline)
             .bind(state)
             .bind(criticality)
             .bind(item.id as i64)

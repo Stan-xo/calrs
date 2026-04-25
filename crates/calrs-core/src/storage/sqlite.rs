@@ -64,7 +64,7 @@ pub async fn open_database(db_name: &str) -> Result<SqlitePool, sqlx::Error> {
     let sql_url = format!("sqlite://{}?mode=rwc", db_path.to_str().unwrap()); // mode "read" "write" "create"
 
     // Creation of the database file in the OS data folder
-    std::fs::create_dir_all(db_path.parent().unwrap()).map_err(|e| sqlx::Error::Io(e))?; // `map_err`convert error std to sqlx, `? propagate error (like raise in python)
+    std::fs::create_dir_all(db_path.parent().unwrap()).map_err(sqlx::Error::Io)?; // `map_err`convert error std to sqlx, `? propagate error (like raise in python)
 
     // Connect database
     SqlitePool::connect(&sql_url).await
