@@ -9,4 +9,4 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono"] }
 dirs = "6"
 tokio = { version = "1", features = ["full", "macros"] }
 serde = { version = "1", features = ["derive"] }
-toml = "1.1.2+spec-1.1.0"
+toml = "1.1.2"

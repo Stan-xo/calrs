@@ -43,7 +43,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let pool = open_database("calrs.db").await.unwrap();
+//!     let pool = open_database("calrs").await.unwrap();
 //!     init_database(&pool).await.unwrap();
 //! }
 //! ```
@@ -54,13 +54,13 @@ use std::path::PathBuf;
 
 /// Opens or creates the SQLite database for the given profile name.
 ///
-/// The database file is stored in the OS data directory under `calrs/{db_name}`.
+/// The database file is stored in the OS data directory under `calrs/{db_name}.db`.
 /// The directory is created if it does not exist.
 pub async fn open_database(db_name: &str) -> Result<SqlitePool, sqlx::Error> {
     let db_path: PathBuf = dirs::data_dir()
         .expect("Could not find data directory")
         .join(APP_NAME)
-        .join(db_name);
+        .join(format!("{}.db", db_name));
     let sql_url = format!("sqlite://{}?mode=rwc", db_path.to_str().unwrap()); // mode "read" "write" "create"
 
     // Creation of the database file in the OS data folder

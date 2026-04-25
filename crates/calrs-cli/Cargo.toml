@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 calrs-core = { path = "../../crates/calrs-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }

@@ -582,7 +582,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_open_database_creates_file() {
-        let pool = open_database("test.db").await;
+        let pool = open_database("test").await;
         assert!(pool.is_ok());
     }
 
