@@ -8,8 +8,6 @@ use super::task::{Criticality, Task, TaskState};
 use chrono::{DateTime, Utc};
 use std::convert::TryFrom;
 
-use crate::DEFAULT_TIMEZONE;
-
 /// Global visibility and lifecycle status of a calendar item.
 pub enum GlobalStatus {
     Active,
@@ -56,6 +54,7 @@ impl CalendarItem {
     /// Constructor for event
     pub fn new_event(
         title: String,
+        timezone: String,
         date_start: DateTime<Utc>,
         date_end: DateTime<Utc>,
         full_day: bool,
@@ -63,7 +62,7 @@ impl CalendarItem {
         CalendarItem {
             id: 0, // assigned by SQLite on insert
             title, // == title: title
-            timezone: DEFAULT_TIMEZONE.to_string(),
+            timezone,
             status: GlobalStatus::Active,
             kind: ItemKind::Event(Event {
                 date_start,
@@ -85,11 +84,11 @@ impl CalendarItem {
     }
 
     /// Constructor for Task
-    pub fn new_task(title: String) -> Self {
+    pub fn new_task(title: String, timezone: String) -> Self {
         CalendarItem {
             id: 0, // assigned by SQLite on insert
             title, // == title: title
-            timezone: DEFAULT_TIMEZONE.to_string(),
+            timezone,
             status: GlobalStatus::Active,
             kind: ItemKind::Task(Task {
                 deadline: None,

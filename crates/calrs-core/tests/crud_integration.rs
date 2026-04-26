@@ -14,10 +14,16 @@ async fn setup_db() -> sqlx::SqlitePool {
 }
 
 fn make_test_event() -> CalendarItem {
-    CalendarItem::new_event("Test event".to_string(), Utc::now(), Utc::now(), false)
+    CalendarItem::new_event(
+        "Test event".to_string(),
+        "UTC".to_string(),
+        Utc::now(),
+        Utc::now(),
+        false,
+    )
 }
 fn make_test_task() -> CalendarItem {
-    CalendarItem::new_task("Test task".to_string())
+    CalendarItem::new_task("Test task".to_string(), "UTC".to_string())
 }
 
 #[tokio::test]

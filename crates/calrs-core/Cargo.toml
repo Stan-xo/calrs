@@ -10,3 +10,6 @@ dirs = "6"
 tokio = { version = "1", features = ["full", "macros"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1.1.2"
+
+[dev-dependencies]
+tempfile = "3"

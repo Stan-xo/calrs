@@ -269,6 +269,28 @@ pub async fn delete_item(pool: &SqlitePool, id: u64) -> Result<(), sqlx::Error> 
     Ok(())
 }
 
+/// Deletes all items from the database, effectively resetting the profile.
+pub async fn reset_database(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM recurrence_exceptions")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM recurrences")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM reminders")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM links").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM events").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM tasks").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM calendar_items")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Fetches all active calendar items.
 ///
 /// Deleted items (where `deleted_at` is set) are excluded.
@@ -312,6 +334,18 @@ async fn build_item(pool: &SqlitePool, row: CalendarItemRow) -> Result<CalendarI
     item.links = fetch_links(pool, id).await?;
 
     Ok(item)
+}
+
+/// Updates the timezone of all calendar items for a given profile.
+///
+/// Useful when the user changes their profile timezone and wants
+/// to apply it retroactively to all existing items.
+pub async fn update_all_timezone(pool: &SqlitePool, timezone: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE calendar_items SET timezone = ? WHERE deleted_at IS NULL")
+        .bind(timezone)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 // fetchers
@@ -599,8 +633,13 @@ mod tests {
     async fn test_insert_event_assigns_id() {
         let pool = setup_db().await;
 
-        let mut item =
-            CalendarItem::new_event("Test event".to_string(), Utc::now(), Utc::now(), false);
+        let mut item = CalendarItem::new_event(
+            "Test event".to_string(),
+            "UTC".to_string(),
+            Utc::now(),
+            Utc::now(),
+            false,
+        );
 
         assert_eq!(item.id, 0); // avant insert, id = 0
 
