@@ -17,5 +17,8 @@ pub enum AddKind {
         title: String,
         #[arg(long)]
         deadline: Option<String>,
+        #[arg(long)]
+        // "low", "medium", "high", "urgent", "blocked"
+        criticality: Option<String>,
     },
 }
